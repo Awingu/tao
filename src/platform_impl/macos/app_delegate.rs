@@ -1,7 +1,7 @@
 // Copyright 2019-2021 Tauri Programme within The Commons Conservancy
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{platform::macos::ActivationPolicy, platform_impl::platform::app_state::AppState};
+use crate::{platform::macos::ActivationPolicy, platform_impl::platform::{app_state::AppState, event::EventWrapper}};
 
 use cocoa::base::id;
 use objc::{
@@ -39,6 +39,14 @@ lazy_static! {
     decl.add_method(
       sel!(applicationDidFinishLaunching:),
       did_finish_launching as extern "C" fn(&Object, Sel, id),
+    );
+    decl.add_method(
+      sel!(applicationWillFinishLaunching:),
+      will_finish_launching as extern "C" fn(&Object, Sel, id),
+    );
+    decl.add_method(
+      sel!(handleUrlEvent:withReplyEvent:),
+      handle_url_event_with_reply_event as extern "C" fn(&Object, Sel, id, id),
     );
     decl.add_method(
       sel!(applicationWillTerminate:),
@@ -79,6 +87,78 @@ extern "C" fn dealloc(this: &Object, _: Sel) {
     // memory
     Box::from_raw(state_ptr as *mut RefCell<AuxDelegateState>);
   }
+}
+
+/// Adapted from https://github.com/mrmekon/fruitbasket
+/// Apple kInternetEventClass constant
+#[allow(non_upper_case_globals)]
+const kInternetEventClass: u32 = 0x4755524c;
+/// Adapted from https://github.com/mrmekon/fruitbasket
+/// Apple kAEGetURL constant
+#[allow(non_upper_case_globals)]
+const kAEGetURL: u32 = 0x4755524c;
+/// Adapted from https://github.com/mrmekon/fruitbasket
+/// Apple keyDirectObject constant
+#[allow(non_upper_case_globals)]
+pub const keyDirectObject: u32 = 0x2d2d2d2d;
+
+extern "C" fn will_finish_launching(this: &Object, _: Sel, _: id) {
+  trace!("Triggered `applicationWillFinishLaunching`");
+  // Adapted from https://github.com/mrmekon/fruitbasket
+  unsafe {
+    let cls = Class::get("NSAppleEventManager").unwrap();
+    let manager: *mut Object = msg_send![cls, sharedAppleEventManager];
+    let _:() = msg_send![
+      manager,
+      setEventHandler: this
+      andSelector: sel!(handleUrlEvent:withReplyEvent:)
+      forEventClass: kInternetEventClass
+      andEventID: kAEGetURL];
+  }
+  trace!("Completed `applicationWillFinishLaunching`");
+}
+
+/// Adapted from https://github.com/mrmekon/fruitbasket
+/// Parse an Apple URL event into a URL string
+///
+/// Takes an NSAppleEventDescriptor from an Apple URL event, unwraps
+/// it, and returns the contained URL as a String.
+fn parse_url_event(event: *mut Object) -> String {
+  if event as u64 == 0u64 {
+      return "".into();
+  }
+  unsafe {
+      let class: u32 = msg_send![event, eventClass];
+      let id: u32 = msg_send![event, eventID];
+      if class != kInternetEventClass || id != kAEGetURL {
+          return "".into();
+      }
+      let subevent: *mut Object = msg_send![event, paramDescriptorForKeyword: keyDirectObject];
+      let nsstring: *mut Object = msg_send![subevent, stringValue];
+      nsstring_to_string(nsstring)
+  }
+}
+
+/// Adapted from https://github.com/mrmekon/fruitbasket
+/// Convert an NSString to a Rust `String`
+fn nsstring_to_string(nsstring: *mut Object) -> String {
+  unsafe {
+      let cstr: *const i8 = msg_send![nsstring, UTF8String];
+      if cstr != std::ptr::null() {
+          std::ffi::CStr::from_ptr(cstr)
+              .to_string_lossy()
+              .into_owned()
+      } else {
+          "".into()
+      }
+  }
+}
+
+extern "C" fn handle_url_event_with_reply_event(_: &Object, _: Sel, event: id, _: id) {
+  trace!("Triggered `handle_url_event_with_reply_event`");
+  let url = parse_url_event(event);
+  AppState::queue_event(EventWrapper::StaticEvent(crate::event::Event::UrlEvent(url)));
+  trace!("Completed `handle_url_event_with_reply_event`");
 }
 
 extern "C" fn did_finish_launching(this: &Object, _: Sel, _: id) {

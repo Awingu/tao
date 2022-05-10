@@ -162,6 +162,9 @@ pub enum Event<'a, T: 'static> {
   /// This is irreversable - if this event is emitted, it is guaranteed to be the last event that
   /// gets emitted. You generally want to treat this as an "do on quit" event.
   LoopDestroyed,
+
+  /// Emitted when a URL is received.
+  UrlEvent(String),
 }
 
 impl<T: Clone> Clone for Event<'static, T> {
@@ -203,6 +206,7 @@ impl<T: Clone> Clone for Event<'static, T> {
         position: *position,
       },
       GlobalShortcutEvent(accelerator_id) => GlobalShortcutEvent(*accelerator_id),
+      UrlEvent(url) => UrlEvent(url.clone()),
     }
   }
 }
@@ -240,6 +244,7 @@ impl<'a, T> Event<'a, T> {
         position,
       }),
       GlobalShortcutEvent(accelerator_id) => Ok(GlobalShortcutEvent(accelerator_id)),
+      UrlEvent(url) => Ok(UrlEvent(url)),
     }
   }
 
@@ -279,6 +284,7 @@ impl<'a, T> Event<'a, T> {
         position,
       }),
       GlobalShortcutEvent(accelerator_id) => Some(GlobalShortcutEvent(accelerator_id)),
+      UrlEvent(url) => Some(UrlEvent(url)),
     }
   }
 }
